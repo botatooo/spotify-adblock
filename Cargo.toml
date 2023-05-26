@@ -12,6 +12,7 @@ regex = "*"
 serde = { version = "*", features = ["derive"] }
 serde_regex = "*"
 toml = "*"
+x11 = "*"
 
 [lib]
 name = "spotifyadblock"

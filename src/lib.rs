@@ -1,12 +1,15 @@
 mod cef;
+mod xcb;
 
 use cef::{
     _cef_request_context_t, _cef_request_t, _cef_urlrequest_client_t, cef_string_userfree_utf16_t, cef_urlrequest_t,
 };
+use xcb::{xcb_protocol_request_t, xcb_connection_t};
 use lazy_static::lazy_static;
-use libc::{addrinfo, c_char, dlsym, EAI_FAIL, RTLD_NEXT};
+use libc::{addrinfo, c_char, iovec, dlsym, EAI_FAIL, RTLD_NEXT};
 use regex::RegexSet;
 use serde::Deserialize;
+use x11::xlib::{XOpenDisplay, XAllocClassHint, XSetClassHint, XFree, XCloseDisplay, Display, Window};
 use std::{ffi::CStr, fs::read_to_string, mem, path::PathBuf, ptr::null, slice::from_raw_parts, string::String};
 
 macro_rules! hook {
@@ -69,6 +72,54 @@ lazy_static! {
             denylist: RegexSet::empty(),
         }
     };
+}
+
+hook! {
+    xcb_send_request(c: *mut xcb_connection_t, flags: i32, vector: *mut iovec, request: *const xcb_protocol_request_t) -> u32 => REAL_XCB_SEND_REQUEST {
+        if request.is_null() {
+            return REAL_XCB_SEND_REQUEST(c, flags, vector, request);
+        }
+
+        if (*request).count >= 1 && (*vector).iov_len >= 8 && unsafe { *((*vector).iov_base as *const u8) } == 8 {
+            let window_id = unsafe { *((*vector).iov_base as *const u32).offset(1) };
+
+            println!("[*] spotify window {} found", window_id);
+
+            let dpy = unsafe { XOpenDisplay(null()) };
+            let class_hint = unsafe { XAllocClassHint() };
+            if !class_hint.is_null() {
+                unsafe {
+                    (*class_hint).res_name = "spotify\0".as_ptr() as *mut i8;
+                    (*class_hint).res_class = "Spotify\0".as_ptr() as *mut i8;
+                    XSetClassHint(dpy, window_id.into(), class_hint);
+                    XFree(class_hint as *mut _);
+                }
+            }
+            unsafe {
+                XCloseDisplay(dpy);
+            }
+        }
+
+        REAL_XCB_SEND_REQUEST(c, flags, vector, request)
+    }
+}
+
+hook! {
+    XMapWindow(dpy: *mut Display, w: Window) -> i32 => REAL_XMAPWINDOW {
+        println!("[*] spotify window {} found", w);
+
+        let class_hint = unsafe { XAllocClassHint() };
+        if !class_hint.is_null() {
+            unsafe {
+                (*class_hint).res_name = "spotify\0".as_ptr() as *mut i8;
+                (*class_hint).res_class = "Spotify\0".as_ptr() as *mut i8;
+                XSetClassHint(dpy, w, class_hint);
+                XFree(class_hint as *mut _);
+            }
+        }
+
+        REAL_XMAPWINDOW(dpy, w)
+    }
 }
 
 hook! {
